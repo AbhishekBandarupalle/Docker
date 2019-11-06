@@ -2,8 +2,8 @@
 
 ## Docker-Engine:: Client Server Application 
 
-dockerd -- Server
-Docker CLI - Client
+* dockerd -- Server  
+* Docker CLI - Client
 
 dockerd can be accessed by CLI and API
 
