@@ -256,3 +256,222 @@ q4kuibkiyubl        helloworld.5        alpine:latest       worker              
 [abhi@manager ~]$ 
 ```
 
+# _Rolling Updates using Docker Swarm_
+
+Docker allows rolling updates to services, one task at a time by default. This however, can be updated by the flag `--update-parallelism`
+
+Let's start with creating a redis service, scaled to 5 tasks:
+
+```
+[abhi@manager ~]$ docker service create --replicas 5 --name redis --update-delay 10s redis:3.0.6
+w1qqxaso9udushe7yr722s5iy
+overall progress: 5 out of 5 tasks 
+1/5: running   [==================================================>] 
+2/5: running   [==================================================>] 
+3/5: running   [==================================================>] 
+4/5: running   [==================================================>] 
+5/5: running   [==================================================>] 
+verify: Service converged 
+
+[abhi@manager ~]$ docker service ps redis
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+l8x03tapgojv        redis.1             redis:3.0.6         worker2             Running             Running 14 seconds ago                       
+qyb74pgmsw43        redis.2             redis:3.0.6         worker              Running             Running 14 seconds ago                       
+vbrmx5ljtqo5        redis.3             redis:3.0.6         worker2             Running             Running 14 seconds ago                       
+g83067k1cnxv        redis.4             redis:3.0.6         manager             Running             Running 15 seconds ago                       
+8sb72hrpk5d1        redis.5             redis:3.0.6         worker              Running             Running 14 seconds ago                       
+[abhi@manager ~]$ 
+[abhi@manager ~]$ docker service inspect --pretty redis
+
+ID:		w1qqxaso9udushe7yr722s5iy
+Name:		redis
+Service Mode:	Replicated
+ Replicas:	5
+Placement:
+UpdateConfig:
+ Parallelism:	1
+ Delay:		10s
+ On failure:	pause
+ Monitoring Period: 5s
+ Max failure ratio: 0
+ Update order:      stop-first
+RollbackConfig:
+ Parallelism:	1
+ On failure:	pause
+ Monitoring Period: 5s
+ Max failure ratio: 0
+ Rollback order:    stop-first
+ContainerSpec:
+ Image:		redis:3.0.6@sha256:6a692a76c2081888b589e26e6ec835743119fe453d67ecf03df7de5b73d69842
+ Init:		false
+Resources:
+Endpoint Mode:	vip
+```
+
+Now, let's change the update-config, with Parallelism to 3:
+```
+[abhi@manager ~]$ docker service update --update-parallelism 3 redis
+redis
+overall progress: 5 out of 5 tasks 
+1/5: running   [==================================================>] 
+2/5: running   [==================================================>] 
+3/5: running   [==================================================>] 
+4/5: running   [==================================================>] 
+5/5: running   [==================================================>] 
+verify: Service converged 
+[abhi@manager ~]$ 
+```
+
+Now, if we make any updates to the running tasks - swarm does 3 at a time. Here, since we have 5 tasks running, the first 3 are updated and once they are in `RUNNING` state, the remaining 2 are being updated.
+
+Below you can see, first 3 tasks are updated and later the remaining 2 are updated:
+
+```
+[abhi@manager ~]$ docker service update redis --image redis:3.0.7
+redis
+overall progress: 3 out of 5 tasks 
+1/5: running   [==================================================>] 
+2/5: running   [==================================================>] 
+3/5:   
+4/5:   
+5/5: running   [==================================================>] 
+
+[abhi@manager ~]$ docker service update redis --image redis:3.0.7
+redis
+overall progress: 5 out of 5 tasks 
+1/5: running   [==================================================>] 
+2/5: running   [==================================================>] 
+3/5: running   [==================================================>] 
+4/5: running   [==================================================>] 
+5/5: running   [==================================================>] 
+verify: Service converged 
+[abhi@manager ~]$ 
+
+[abhi@manager ~]$ docker service ps redis
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE             ERROR               PORTS
+nihzn8cteltd        redis.1             redis:3.0.7         worker              Running             Running 14 seconds ago                        
+ks5pdkpoh0to         \_ redis.1         redis:3.0.6         worker              Shutdown            Shutdown 19 seconds ago                       
+h6eh2g0a0gid        redis.2             redis:3.0.7         manager             Running             Running 31 seconds ago                        
+u7ryur3ylilo         \_ redis.2         redis:3.0.6         worker2             Shutdown            Shutdown 38 seconds ago                       
+x0pomf6gzhsi         \_ redis.2         redis:3.0.6         worker2             Shutdown            Complete 7 minutes ago                        
+j4jfvawz5wj9         \_ redis.2         redis:3.0.6         worker2             Shutdown            Complete 10 minutes ago                       
+1yse0jck5cbz        redis.3             redis:3.0.7         worker2             Running             Running 30 seconds ago                        
+iy39enjmuare         \_ redis.3         redis:3.0.6         manager             Shutdown            Shutdown 38 seconds ago                       
+[abhi@manager ~]$ 
+
+```
+
+
+### Docker Node availability modes:
+
+* `ACTIVE`  
+* `DRAIN`
+
+When the docker node is set to `DRAIN`, it no longer accepts tasks from the swarm manager. And the current running tasks on that node are stopped and being replicated on an `ACTIVE` node.
+
+*_Setting a node to DRAIN does not remove standalone containers from that node, such as those created with docker run, docker-compose up, or the Docker Engine API. A node’s status, including DRAIN, only affects the node’s ability to schedule swarm service workloads._*
+
+```
+[abhi@manager ~]$ 
+[abhi@manager ~]$ docker node ls
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+jl9acswyh10ad7uqf0numc4bn *   manager             Ready               Active              Leader              19.03.4
+ysmvp8yv1nrzuichfhcpbb7t9     worker              Ready               Active                                  19.03.4
+yd3idenuf18s3xcd88wc4etap     worker2             Ready               Active                                  19.03.4
+[abhi@manager ~]$ 
+
+[abhi@manager ~]$ docker service create --replicas 3 --name redis --update-delay 10s redis:3.0.6
+tho30tlzbvkwa9spyemn0yotf
+overall progress: 3 out of 3 tasks 
+1/3: running   [==================================================>] 
+2/3: running   [==================================================>] 
+3/3: running   [==================================================>] 
+verify: Service converged 
+[abhi@manager ~]$ 
+[abhi@manager ~]$ 
+[abhi@manager ~]$ docker service ps redis
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+kxfo03jgg7dy        redis.1             redis:3.0.6         worker              Running             Running 43 minutes ago                       
+p7xclqt9kihb        redis.2             redis:3.0.6         worker2             Running             Running 43 minutes ago                       
+wezh3tqkd13m        redis.3             redis:3.0.6         manager             Running             Running 43 minutes ago                       
+[abhi@manager ~]$ 
+
+```
+
+We have 3 `ACTIVE` nodes and the tasks for the _redis_ service are placed on all the nodes. Now, if we set one of the nodes to `DRAIN`, the task should be stopped and replicated on another `ACTIVE` node. Furthermore, any future tasks will not be placed on the `DRAIN` node.
+
+```
+[abhi@manager ~]$ docker node update --availability drain worker2
+worker2
+[abhi@manager ~]$ docker node inspect --pretty worker2
+ID:			yd3idenuf18s3xcd88wc4etap
+Hostname:              	worker2
+Joined at:             	2019-11-05 16:42:18.561972623 +0000 utc
+Status:
+ State:			Ready
+ Availability:         	**Drain**
+ Address:		192.168.122.235
+Platform:
+ Operating System:	linux
+ Architecture:		x86_64
+Resources:
+ CPUs:			2
+ Memory:		2.781GiB
+Plugins:
+ Log:		awslogs, fluentd, gcplogs, gelf, journald, json-file, local, logentries, splunk, syslog
+ Network:		bridge, host, ipvlan, macvlan, null, overlay
+ Volume:		local
+Engine Version:		19.03.4
+TLS Info:
+ TrustRoot:
+-----BEGIN CERTIFICATE-----
+MIIBaTCCARCgAwIBAgIUNGezjSc+wF4/3KGGSjvCWtfzXT0wCgYIKoZIzj0EAwIw
+EzERMA8GA1UEAxMIc3dhcm0tY2EwHhcNMTkxMTA1MTYzNTAwWhcNMzkxMDMxMTYz
+NTAwWjATMREwDwYDVQQDEwhzd2FybS1jYTBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABKKYMdUBiodV1PfuR80uGHGSacEdHWe3mLfEhqoRGFT8fnAiJFoIcLkGTmzx
+Av1qcsLwFhyRKtpKYIMK1QsRH+CjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMB
+Af8EBTADAQH/MB0GA1UdDgQWBBRth5FnWFUSTqZJn3Q3CUs7ag4juzAKBggqhkjO
+PQQDAgNHADBEAiAkrMRrtG/2qLw9/N2s0aLXgVxczzMmvHkiXl0SCDTquwIgR5BH
+p/G1cn9tTH92U4FALyX7elOaN2JLAWB9ty/yv7Q=
+-----END CERTIFICATE-----
+
+ Issuer Subject:	MBMxETAPBgNVBAMTCHN3YXJtLWNh
+ Issuer Public Key:	MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEopgx1QGKh1XU9+5HzS4YcZJpwR0dZ7eYt8SGqhEYVPx+cCIkWghwuQZObPEC/WpywvAWHJEq2kpggwrVCxEf4A==
+[abhi@manager ~]$ 
+```
+
+```
+[abhi@manager ~]$ docker service ps redis
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE                 ERROR               PORTS
+kxfo03jgg7dy        redis.1             redis:3.0.6         worker              Running             Running 45 minutes ago                            
+u35ige1b0mxj        redis.2             redis:3.0.6         manager             Running             Running about a minute ago                        
+p7xclqt9kihb         \_ redis.2         redis:3.0.6         worker2             Shutdown            Shutdown about a minute ago                       
+wezh3tqkd13m        redis.3             redis:3.0.6         manager             Running             Running 45 minutes ago                            
+[abhi@manager ~]$ docker node update --availability active worker2
+```
+
+Scaling the _redis_ service to 5 -
+```
+[abhi@manager ~]$ docker service scale redis=5
+redis scaled to 5
+overall progress: 5 out of 5 tasks 
+1/5: running   [==================================================>] 
+2/5: running   [==================================================>] 
+3/5: running   [==================================================>] 
+4/5: running   [==================================================>] 
+5/5: running   [==================================================>] 
+verify: Service converged 
+[abhi@manager ~]$ 
+[abhi@manager ~]$ docker service ps redis
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE               ERROR               PORTS
+kxfo03jgg7dy        redis.1             redis:3.0.6         worker              Running             Running about an hour ago                       
+u35ige1b0mxj        redis.2             redis:3.0.6         manager             Running             Running 15 minutes ago                          
+p7xclqt9kihb         \_ redis.2         redis:3.0.6         worker2             Shutdown            Shutdown 15 minutes ago                         
+wezh3tqkd13m        redis.3             redis:3.0.6         manager             Running             Running about an hour ago                       
+zv3j5yj2lmpl        redis.4             redis:3.0.6         worker              Running             Running 9 seconds ago                           
+smjwi4y393xl        redis.5             redis:3.0.6         worker              Running             Running 9 seconds ago                           
+[abhi@manager ~]$ 
+
+```
+
+All the tasks are scheduled on the `ACTIVE` nodes.
