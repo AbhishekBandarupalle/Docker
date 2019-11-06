@@ -1,9 +1,9 @@
-# Docker
+# Docker-Engine
 
-## Docker-Engine:: Client Server Application 
+**Client Server Model**
 
-* dockerd -- Server  
-* Docker CLI - Client
+dockerd -- Server  
+Docker CLI - Client
 
 dockerd can be accessed by CLI and API
 
@@ -49,10 +49,25 @@ Docker uses
 2. Network
 3. Process
 4. Mount
-5. IPC
-NameSpaces to provide isolation inside the containers running on the host OS
+5. IPC **NameSpaces** to provide isolation inside the containers running on the host OS.  
 
-Cgroups are for controlling resource utilization - in particular, CPU and memory
+*_Network namespaces created by docker cannot be seen on `ip netns` command output because docker doe not create a symlink that's required to see network-namespaces on `ip netns`_*
+
+```bash
+pid=$(docker inspect -f '{{.State.Pid}}' ${container_id})
+mkdir -p /var/run/netns/
+ln -sfT /proc/$pid/ns/net /var/run/netns/$container_id
+```
+Then, the container's netns namespace can be examined with ip netns ${container_id}, e.g.:  
+
+```bash
+# e.g. show stats about eth0 inside the container 
+ip netns exec "${container_id}" ip -s link show eth0
+```
+<pre>https://stackoverflow.com/questions/31265993/docker-networking-namespace-not-visible-in-ip-netns-list</pre>  
+
+
+**Cgroups** are for controlling resource utilization - in particular, CPU and memory
 
 Docker uses Cgroups to limit:
 * CPU limits
@@ -67,11 +82,52 @@ systemd is controlled by systemctl command
 `docker images | awk '{print $3}' | grep -v IMAGE`        #Prints all image ids  
 `docker ps | awk '{print $1}' | grep -v CONTAINER`        #Prints running container ids
 
-
+`docker ps` lists out all running containers. To get inside a running container do:  
+`docker exec -it <Container-ID> /bin/bash`
 
 
 # Docker  Swarm
 https://docs.docker.com/engine/swarm/swarm-mode/
+
+_**What is a Swarm?**_ 
+
+The cluster management and orchestration features embedded in the Docker Engine are built using swarmkit. Swarmkit is a separate project which implements Docker’s orchestration layer and is used directly within Docker.
+
+A swarm consists of multiple Docker hosts which run in swarm mode and act as managers (to manage membership and delegation) and workers (which run swarm services). A given Docker host can be a manager, a worker, or perform both roles. When you create a service, you define its optimal state (number of replicas, network and storage resources available to it, ports the service exposes to the outside world, and more). Docker works to maintain that desired state. For instance, if a worker node becomes unavailable, Docker schedules that node’s tasks on other nodes. A task is a running container which is part of a swarm service and managed by a swarm manager, as opposed to a standalone container.
+
+One of the key advantages of swarm services over standalone containers is that you can modify a service’s configuration, including the networks and volumes it is connected to, without the need to manually restart the service. Docker will update the configuration, stop the service tasks with the out of date configuration, and create new ones matching the desired configuration.
+
+When Docker is running in swarm mode, you can still run standalone containers on any of the Docker hosts participating in the swarm, as well as swarm services. A key difference between standalone containers and swarm services is that only swarm managers can manage a swarm, while standalone containers can be started on any daemon. Docker daemons can participate in a swarm as managers, workers, or both.
+
+_**Nodes**_
+
+A node is an instance of the Docker engine participating in the swarm. You can also think of this as a Docker node. You can run one or more nodes on a single physical computer or cloud server, but production swarm deployments typically include Docker nodes distributed across multiple physical and cloud machines.
+
+To deploy your application to a swarm, you submit a service definition to a manager node. The manager node dispatches units of work called tasks to worker nodes.
+
+Manager nodes also perform the orchestration and cluster management functions required to maintain the desired state of the swarm. Manager nodes elect a single leader to conduct orchestration tasks.
+
+Worker nodes receive and execute tasks dispatched from manager nodes. By default manager nodes also run services as worker nodes, but you can configure them to run manager tasks exclusively and be manager-only nodes. An agent runs on each worker node and reports on the tasks assigned to it. The worker node notifies the manager node of the current state of its assigned tasks so that the manager can maintain the desired state of each worker.
+
+**_Services and tasks_**
+
+A **service** is the definition of the tasks to execute on the manager or worker nodes. It is the central structure of the swarm system and the primary root of user interaction with the swarm.
+
+When you create a service, you specify which container image to use and which commands to execute inside running containers.
+
+In the **replicated services** model, the swarm manager distributes a specific number of replica tasks among the nodes based upon the scale you set in the desired state.
+
+For **global services**, the swarm runs one task for the service on every available node in the cluster.
+
+A **task** carries a Docker container and the commands to run inside the container. It is the atomic scheduling unit of swarm. Manager nodes assign tasks to worker nodes according to the number of replicas set in the service scale. Once a task is assigned to a node, it cannot move to another node. It can only run on the assigned node or fail.
+
+**_Load balancing_**
+
+The swarm manager uses **ingress load balancing** to expose the services you want to make available externally to the swarm. The swarm manager can automatically assign the service a PublishedPort or you can configure a PublishedPort for the service. You can specify any unused port. If you do not specify a port, the swarm manager assigns the service a port in the 30000-32767 range.
+
+External components, such as cloud load balancers, can access the service on the PublishedPort of any node in the cluster whether or not the node is currently running the task for the service. All nodes in the swarm route ingress connections to a running task instance.
+
+Swarm mode has an internal **DNS** component that automatically assigns each service in the swarm a DNS entry. The swarm manager uses internal load balancing to distribute requests among services within the cluster based upon the DNS name of the service.
 
  Initialize Docker Swarm using - 
 
@@ -79,12 +135,11 @@ https://docs.docker.com/engine/swarm/swarm-mode/
 
  * To initialize docker swarm with a different overlay address pool -  
 
-`$ docker swarm init --default-addr-pool <IP range in CIDR> [--default-addr-pool <IP range in CIDR> --default-addr-pool-mask-length <CIDR value>]  
-`
+`docker swarm init --default-addr-pool <IP range in CIDR> [--default-addr-pool <IP range in CIDR> --default-addr-pool-mask-length <CIDR value>]`
 
  This initializes swarm with the node as a Manager node: 
 
-```
+```bash
 [abhi@manager ~]$ docker swarm init
 Swarm initialized: current node (2vr72nfkoyeotsngj80porph8) is now a manager.
 
@@ -97,24 +152,28 @@ To add a manager to this swarm, run 'docker swarm join-token manager' and follow
 
 * On the Worker Node:
 
-```
+```bash
 [abhi@worker ~]$ docker swarm join --token SWMTKN-1-48316sjc047oe4i7iulwftt9j4oygmrcjm27yzfijak54eqqx1-1kmsl8k4peck67vuwmqb59cwl 192.168.122.39:2377
 This node joined a swarm as a worker.
 ```
 
  To retrieve the join command including the join token for worker nodes, run:
 
-`docker swarm join-token worker`
+`docker swarm join-token worker`  
 
+```bash
 [abhi@manager ~]$ docker swarm join-token worker  
 To add a worker to this swarm, run the following command:
 
     docker swarm join --token SWMTKN-1-48316sjc047oe4i7iulwftt9j4oygmrcjm27yzfijak54eqqx1-1kmsl8k4peck67vuwmqb59cwl 192.168.122.39:2377
+```  
 
 To view the join command and token for manager nodes, run:
 
-`docker swarm join-token manager`
-```[abhi@manager ~]$ docker swarm join-token manager
+`docker swarm join-token manager`  
+
+```bash
+[abhi@manager ~]$ docker swarm join-token manager
 To add a manager to this swarm, run the following command:
 
     docker swarm join --token SWMTKN-1-48316sjc047oe4i7iulwftt9j4oygmrcjm27yzfijak54eqqx1-9qn4l8gnjd9617q54b6mc1wpv 192.168.122.39:2377
@@ -124,7 +183,7 @@ To add a manager to this swarm, run the following command:
 
 Lists the nodes of docker swarm:
 
-```
+```bash
 [abhi@manager ~]$ docker node ls
 ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
 jl9acswyh10ad7uqf0numc4bn *   manager             Ready               Active              Leader              19.03.4
@@ -139,8 +198,7 @@ Error response from daemon: This node is not a swarm manager. Worker nodes can't
 
 Swarm management commands like docker node ls only work on manager nodes.
 
-# Deploy a service to the swarm #
-
+# Deploy a service to the swarm  
 After you create a swarm, you can deploy a service to the swarm
 
 `docker service create --replicas 1 --name helloworld alpine ping docker.com`
@@ -161,7 +219,7 @@ verify: Service converged
 
 This deployed an Alpine container on one of the worker nodes:
 
-```
+```bash
 [abhi@worker2 ~]$ docker ps
 CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
 8fec43904753        alpine:latest       "ping docker.com"   20 seconds ago      Up 19 seconds                           helloworld.1.qz2fdbqihvs43bhf51u72844v
@@ -170,7 +228,7 @@ CONTAINER ID        IMAGE               COMMAND             CREATED             
 
 `docker service ls` lists all running services:
 
-```
+```bash
 [abhi@manager ~]$ docker service ls
 ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
 zd87w9skys1i        helloworld          replicated          1/1                 alpine:latest       
@@ -180,7 +238,7 @@ zd87w9skys1i        helloworld          replicated          1/1                 
 `docker service rm <service id>` removes the service
 `docker service inspect <service id> --pretty ` provides details about the service and if JSON output is needed, --pretty flag is not required.
 
-```
+```bash
 [abhi@manager ~]$ docker service inspect helloworld --pretty 
 
 ID:		x2qcujpjo8jp69fnbu7e48156
@@ -211,7 +269,7 @@ Endpoint Mode:	vip
 
 `docker service ps <service id>` provides with the node details where the container is running:
 
-```
+```bash
 [abhi@manager ~]$ 
 [abhi@manager ~]$ docker service ls
 ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
@@ -234,7 +292,7 @@ CONTAINER ID        IMAGE               COMMAND             CREATED             
 
 `docker service scale <SERVICE-ID>=<NUMBER-OF-TASKS>`
 
-```
+```bash
 [abhi@manager ~]$ docker service scale helloworld=5
 helloworld scaled to 5
 overall progress: 5 out of 5 tasks 
@@ -262,7 +320,7 @@ Docker allows rolling updates to services, one task at a time by default. This h
 
 Let's start with creating a redis service, scaled to 5 tasks:
 
-```
+```bash
 [abhi@manager ~]$ docker service create --replicas 5 --name redis --update-delay 10s redis:3.0.6
 w1qqxaso9udushe7yr722s5iy
 overall progress: 5 out of 5 tasks 
@@ -309,7 +367,7 @@ Endpoint Mode:	vip
 ```
 
 Now, let's change the update-config, with Parallelism to 3:
-```
+```bash
 [abhi@manager ~]$ docker service update --update-parallelism 3 redis
 redis
 overall progress: 5 out of 5 tasks 
@@ -326,7 +384,7 @@ Now, if we make any updates to the running tasks - swarm does 3 at a time. Here,
 
 Below you can see, first 3 tasks are updated and later the remaining 2 are updated:
 
-```
+```bash
 [abhi@manager ~]$ docker service update redis --image redis:3.0.7
 redis
 overall progress: 3 out of 5 tasks 
@@ -371,7 +429,7 @@ When the docker node is set to `DRAIN`, it no longer accepts tasks from the swar
 
 *_Setting a node to DRAIN does not remove standalone containers from that node, such as those created with docker run, docker-compose up, or the Docker Engine API. A node’s status, including DRAIN, only affects the node’s ability to schedule swarm service workloads._*
 
-```
+```bash
 [abhi@manager ~]$ 
 [abhi@manager ~]$ docker node ls
 ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
@@ -397,10 +455,9 @@ wezh3tqkd13m        redis.3             redis:3.0.6         manager             
 [abhi@manager ~]$ 
 
 ```
-
 We have 3 `ACTIVE` nodes and the tasks for the _redis_ service are placed on all the nodes. Now, if we set one of the nodes to `DRAIN`, the task should be stopped and replicated on another `ACTIVE` node. Furthermore, any future tasks will not be placed on the `DRAIN` node.
 
-```
+```bash
 [abhi@manager ~]$ docker node update --availability drain worker2
 worker2
 [abhi@manager ~]$ docker node inspect --pretty worker2
@@ -440,7 +497,7 @@ p/G1cn9tTH92U4FALyX7elOaN2JLAWB9ty/yv7Q=
 [abhi@manager ~]$ 
 ```
 
-```
+```bash
 [abhi@manager ~]$ docker service ps redis
 ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE                 ERROR               PORTS
 kxfo03jgg7dy        redis.1             redis:3.0.6         worker              Running             Running 45 minutes ago                            
@@ -451,7 +508,7 @@ wezh3tqkd13m        redis.3             redis:3.0.6         manager             
 ```
 
 Scaling the _redis_ service to 5 -
-```
+```bash
 [abhi@manager ~]$ docker service scale redis=5
 redis scaled to 5
 overall progress: 5 out of 5 tasks 
@@ -475,3 +532,101 @@ smjwi4y393xl        redis.5             redis:3.0.6         worker              
 ```
 
 All the tasks are scheduled on the `ACTIVE` nodes.
+
+
+# Docker Logging 
+
+* Docker supports different logging drivers:   
+         - awslogs  
+         - fluentd  
+         - gcplogs  
+         - gelf  
+         - journald  
+         - json-file **[Default]**  
+         - local  
+         - logentries  
+         - splunk  
+         - syslog  
+
+```bash
+[abhi@manager ~]$ docker info | grep -i 'Logging driver'
+
+ Logging Driver: json-file
+
+```
+
+
+
+
+To configure the Docker daemon to default to a specific logging driver, set the value of log-driver to the name of the logging driver in the `daemon.json` file, which is located in /etc/docker/ on Linux hosts or C:\ProgramData\docker\config\ on Windows server hosts. The default logging driver is `json-file`
+
+Sample daemon.json for log-driver to be json-file:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3",
+    "labels": "production_status",
+    "env": "os,customer"
+  }
+}
+```
+
+When you start a container, you can configure it to use a different logging driver than the Docker daemon’s default, using the `--log-driver` flag
+`docker run -it --log-driver none alpine ash`
+
+To find the current logging driver for a running container, if the daemon is using the json-file logging driver, run the following docker inspect command, substituting the container name or ID:
+
+`docker inspect -f '{{.HostConfig.LogConfig.Type}}' <CONTAINER>`
+
+`docker logs <Container-ID>` give the logs of a particular container
+
+## Docker swarm lock
+
+ To protect the swarm cluster, there's an option to lock the cluster and a manager node can only be restarted with an unlock key.
+
+* `docker swarm init --autolock=true` Creates a swarm cluster with autolock enabled.
+
+To enable autolock on an already initialized and running swarm cluster, we can do a docker swarm update:
+`docker swarm update --autolock=true`
+
+Now, when a manager node restarts: run `docker swarm unlock` and provide the key to unlock.
+
+
+## Operate Manager Nodes in a Swarm
+
+* Manager nodes in a swarm cluster run a `Raft Consensus Algorithm` to manage the swarm state.
+
+If there are N manager nodes, Raft algorithm requires (N+1/2) manager nodes to be available and has a fault tolerance of (N-1/2).  
+i.e. If there are 7 manager nodes, there must be (7+1/2) -- 4 nodes available and the fault tolerance would be 3.  
+That means, if there are nodes more than 3 that are not avaialable, no new tasks can be scheduled on the swarm cluster.
+
+To run the nodes as MANAGER only, set the availability of the nodes to `DRAIN`, so that they are available to run manager workloads all the time:  
+`docker node update --availability=drain <NODE>`
+
+* A docker worker node can be promoted as a Manager with the command `docker node promote <NODE>`
+  At the same time, a manager node can be demoted to a worker node using - `docker node demote <NODE>`
+
+https://docs.docker.com/engine/reference/commandline/node_promote/
+
+
+## Docker Swarm Services Visualiztion ##
+
+Docker swarm services visualization dashboard is available as a docker image here: <pre>https://github.com/dockersamples/docker-swarm-visualizer </pre>
+
+The viz container can be run as a standalone container or as a service on docker swarm.  
+
+* To run it as a standalone container:  
+`docker run -it -d -p 8080:8080 -v /var/run/docker.sock:/var/run/docker.sock dockersamples/visualizer`
+
+* As a Docker swarm service:  
+`docker service create --name=viz --publish=8080:8080/tcp --constraint=node.role==manager --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock dockersamples/visualizer`  
+
+* _docker inspect_ *  
+
+Docker inspect command can be used to get low-level information on Docker objects such as containers, images, volumes, networks, nodes, services, or tasks.  
+
+For more info: read `man docker inspect`  
+
